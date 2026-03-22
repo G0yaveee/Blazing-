@@ -7,11 +7,20 @@ import Home from "./pages/Home"
 import Board from "./pages/Board"
 import Feed from "./pages/Feed"
 
+const AUTH_ROUTE = "/authpage"
+
 function hasRecoveryParams() {
   if (typeof window === "undefined") return false
 
+  const searchParams = new URLSearchParams(window.location.search)
   const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""))
-  return hashParams.get("type") === "recovery"
+
+  return (
+    hashParams.get("type") === "recovery" ||
+    Boolean(hashParams.get("access_token")) ||
+    Boolean(searchParams.get("code")) ||
+    searchParams.get("type") === "recovery"
+  )
 }
 
 export default function App() {
@@ -58,7 +67,7 @@ export default function App() {
     }
 
     if (!user) {
-      return <Navigate to="/Authpage" replace />
+      return <Navigate to={AUTH_ROUTE} replace />
     }
 
     return renderElement()
@@ -78,12 +87,13 @@ export default function App() {
             path="/"
             element={
               <Navigate
-                to={isRecoveryFlow ? "/reset-password" : user ? "/home" : "/Authpage"}
+                to={isRecoveryFlow ? "/reset-password" : user ? "/home" : AUTH_ROUTE}
                 replace
               />
             }
           />
-          <Route path="/Authpage" element={authPageElement} />
+          <Route path={AUTH_ROUTE} element={authPageElement} />
+          <Route path="/Authpage" element={<Navigate to={AUTH_ROUTE} replace />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route
             path="/home"
@@ -107,7 +117,7 @@ export default function App() {
             path="*"
             element={
               <Navigate
-                to={isRecoveryFlow ? "/reset-password" : user ? "/home" : "/Authpage"}
+                to={isRecoveryFlow ? "/reset-password" : user ? "/home" : AUTH_ROUTE}
                 replace
               />
             }

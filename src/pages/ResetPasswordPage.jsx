@@ -36,9 +36,13 @@ export default function ResetPasswordPage() {
     }
 
     const checkRecoveryState = async () => {
+      const searchParams = new URLSearchParams(window.location.search)
       const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""))
       const isRecoveryLink =
-        hashParams.get("type") === "recovery" || Boolean(hashParams.get("access_token"))
+        hashParams.get("type") === "recovery" ||
+        Boolean(hashParams.get("access_token")) ||
+        Boolean(searchParams.get("code")) ||
+        searchParams.get("type") === "recovery"
 
       if (isRecoveryLink) {
         enableReset()
@@ -112,7 +116,7 @@ export default function ResetPasswordPage() {
 
       window.setTimeout(async () => {
         await supabase.auth.signOut()
-        navigate("/Authpage", { replace: true })
+        navigate("/authpage", { replace: true })
       }, 1200)
     } catch {
       setMessage("Something went wrong.")
@@ -177,7 +181,7 @@ export default function ResetPasswordPage() {
                   : "Update password"}
             </button>
 
-            <Link to="/Authpage" className="btn btn-ghost text-base-content/80">
+            <Link to="/authpage" className="btn btn-ghost text-base-content/80">
               Back to login
             </Link>
 

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react"
 import { supabase } from "../lib/supabase"
+import { getResetPasswordUrl } from "../lib/appUrl"
 
 function getAlertClass(message) {
   const normalized = message.toLowerCase()
@@ -28,14 +29,7 @@ export default function AuthPage() {
   const isLoginView = view === "login"
 
   const resetLink = useMemo(() => {
-    if (typeof window === "undefined") return undefined
-
-    const configuredAppUrl = import.meta.env.VITE_APP_URL?.trim()
-    const baseUrl = window.location.hostname === "localhost"
-      ? window.location.origin
-      : configuredAppUrl || "https://blazing-green.vercel.app"
-
-    return `${baseUrl.replace(/\/$/, "")}/reset-password`
+    return getResetPasswordUrl() || undefined
   }, [])
 
   const handleSubmit = async (event) => {
