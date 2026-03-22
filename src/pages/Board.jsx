@@ -509,6 +509,22 @@ function getTaskRecurrencePayload(taskType, scheduleDraft) {
   return null
 }
 
+function getRecurrenceErrorMessage(error, taskType) {
+  const message = error?.message || "Could not save the task schedule."
+
+  if (!message.toLowerCase().includes("row-level security policy")) {
+    return message
+  }
+
+  const normalizedType = normalizeTaskType(taskType)
+
+  if (normalizedType === "weekly" || normalizedType === "monthly" || normalizedType === "yearly") {
+    return "Recurring tasks are being blocked by the database policy for task_recurrence. If this task is only for today, switch it to One-time. Otherwise, update the Supabase RLS policy for task_recurrence and try again."
+  }
+
+  return "The database blocked the schedule settings for this task. If this is only for today, switch it to One-time. Otherwise, update the Supabase RLS policy for task_recurrence and try again."
+}
+
 function getNearestScheduledDate(task, referenceDate = new Date(), direction = -1, maxDays = 730) {
   const cursor = new Date(referenceDate)
   cursor.setHours(0, 0, 0, 0)
@@ -2026,7 +2042,7 @@ export default function Board({ user }) {
         .delete()
         .eq("id", data.id)
 
-      setError(recurrenceError.message)
+      setError(getRecurrenceErrorMessage(recurrenceError, taskType))
       setSubmittingTask(false)
       return
     }
@@ -2149,7 +2165,7 @@ export default function Board({ user }) {
     const { error: recurrenceError } = await syncTaskRecurrence(taskId, taskEditDraft.type, taskEditDraft)
 
     if (recurrenceError) {
-      setError(recurrenceError.message)
+      setError(getRecurrenceErrorMessage(recurrenceError, taskEditDraft.type))
       setSavingTaskId("")
       return
     }
