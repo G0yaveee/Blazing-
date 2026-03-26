@@ -588,6 +588,7 @@ function getStatusPriority(label) {
   if (label === "Awaiting review") return 1
   if (label === "Needs fresh proof") return 2
   if (label.startsWith("Verified by")) return 3
+  if (label === "Paused") return 4
   return 4
 }
 
@@ -603,6 +604,14 @@ function getTaskPostMap(posts) {
 }
 
 function getTaskStatus(task, taskPosts, commentsByPost) {
+  if (task?.is_paused) {
+    return {
+      label: "Paused",
+      tone: "badge-ghost",
+      detail: "Hidden from the live schedule until it is resumed.",
+    }
+  }
+
   const normalizedTaskType = normalizeTaskType(task.type)
   const latestPost = taskPosts?.[0] ?? null
 
@@ -669,7 +678,9 @@ function getTaskStatus(task, taskPosts, commentsByPost) {
 function getBoardReminders(tasks, taskPosts, commentsByPost, posts) {
   const reminders = []
 
-  const dailyTasks = tasks.filter((task) => normalizeTaskType(task.type) === "daily")
+  const dailyTasks = tasks.filter(
+    (task) => !task.is_paused && normalizeTaskType(task.type) === "daily"
+  )
   const missingDaily = dailyTasks.filter((task) => {
     const latestPost = (taskPosts[task.id] ?? [])[0]
     if (!latestPost) return true
@@ -879,6 +890,14 @@ function getMonthGrid(date) {
 }
 
 function getStatusMeta(statusLabel) {
+  if (statusLabel === "Paused") {
+    return {
+      cardClass: "border-base-300/55 bg-base-200/55",
+      indicatorClass: "bg-base-300 text-base-content",
+      icon: "||",
+    }
+  }
+
   if (statusLabel === "No proof yet") {
     return {
       cardClass: "border-warning/50 bg-warning/12",
@@ -921,6 +940,16 @@ function getQueueSummary(items) {
     },
     { overdue: 0, awaitingReview: 0, awaitingCheckIn: 0, verified: 0 }
   )
+}
+
+function getDefaultSelectedTaskId(tasks, preferredTaskId = "") {
+  const activeTasks = tasks.filter((task) => !task.is_paused)
+
+  if (preferredTaskId && activeTasks.some((task) => task.id === preferredTaskId)) {
+    return preferredTaskId
+  }
+
+  return activeTasks[0]?.id ?? ""
 }
 
 function isVerifiedStatusLabel(label) {
@@ -1201,6 +1230,7 @@ export default function Board({ user }) {
   })
   const [savingTaskId, setSavingTaskId] = useState("")
   const [deletingTaskId, setDeletingTaskId] = useState("")
+  const [togglingTaskId, setTogglingTaskId] = useState("")
   const [commentDrafts, setCommentDrafts] = useState({})
   const [reviewDecisions, setReviewDecisions] = useState({})
   const [submittingCommentFor, setSubmittingCommentFor] = useState("")
@@ -1381,7 +1411,7 @@ export default function Board({ user }) {
       setTasks(tasksResult.data ?? [])
       setPosts(postsResult.data ?? [])
       setCommentsByPost(groupedComments)
-      setSelectedTaskId((tasksResult.data ?? [])[0]?.id ?? "")
+      setSelectedTaskId(getDefaultSelectedTaskId(tasksResult.data ?? []))
 
       if (goalsResult.error) {
         setError(goalsResult.error.message)
@@ -1465,6 +1495,7 @@ export default function Board({ user }) {
   const hasProof = posts.length > 0
   const isEmptyBoard = !hasRoutines && !hasProof && pendingReviewCount === 0
   const upcomingTasks = useMemo(() => tasks.slice(0, 4), [tasks])
+  const activeTasks = useMemo(() => tasks.filter((task) => !task.is_paused), [tasks])
   const taskPosts = useMemo(() => getTaskPostMap(posts), [posts])
   const taskById = useMemo(
     () => new Map(tasks.map((task) => [task.id, task])),
@@ -1508,7 +1539,7 @@ export default function Board({ user }) {
   const monthGrid = useMemo(() => getMonthGrid(now), [now])
   const liveQueueTasks = useMemo(
     () =>
-      tasks
+      activeTasks
         .map((task) => ({
           task,
           status: getTaskStatus(task, taskPosts[task.id] ?? [], commentsByPost),
@@ -1524,7 +1555,7 @@ export default function Board({ user }) {
           return new Date(a.task.created_at).getTime() - new Date(b.task.created_at).getTime()
         })
         .slice(0, 5),
-    [tasks, taskPosts, commentsByPost, now]
+    [activeTasks, taskPosts, commentsByPost, now]
   )
   const queueSummary = useMemo(() => getQueueSummary(liveQueueTasks), [liveQueueTasks])
   const actionableQueueTasks = useMemo(
@@ -1737,8 +1768,7 @@ export default function Board({ user }) {
     setGoals(goalsResult.data ?? [])
     setTasks(tasksResult.data ?? [])
     setSelectedTaskId((currentTaskId) => {
-      if (currentTaskId) return currentTaskId
-      return (tasksResult.data ?? [])[0]?.id ?? ""
+      return getDefaultSelectedTaskId(tasksResult.data ?? [], currentTaskId)
     })
   }
 
@@ -2205,7 +2235,7 @@ export default function Board({ user }) {
     }
 
     if (selectedTaskId === taskId) {
-      setSelectedTaskId("")
+      setSelectedTaskId(getDefaultSelectedTaskId(tasks.filter((task) => task.id !== taskId)))
     }
 
     if (editingTaskId === taskId) {
@@ -2221,6 +2251,39 @@ export default function Board({ user }) {
     await refreshTasks()
     await refreshPostsAndComments()
     setDeletingTaskId("")
+  }
+
+  async function handleToggleTaskPaused(taskId, shouldPause) {
+    const task = tasks.find((entry) => entry.id === taskId)
+    const confirmed = shouldPause
+      ? window.confirm(
+          `Pause "${task?.title || "this routine"}"? It will stop appearing in the live queue and proof composer until resumed.`
+        )
+      : true
+
+    if (!confirmed) return
+
+    setTogglingTaskId(taskId)
+    setError("")
+
+    const { error: updateError } = await supabase
+      .from("tasks")
+      .update({ is_paused: shouldPause })
+      .eq("id", taskId)
+
+    if (updateError) {
+      setError(updateError.message)
+      setTogglingTaskId("")
+      return
+    }
+
+    if (shouldPause && selectedTaskId === taskId) {
+      setSelectedTaskId(getDefaultSelectedTaskId(tasks.filter((entry) => entry.id !== taskId)))
+    }
+
+    await refreshTasks()
+    await refreshPostsAndComments()
+    setTogglingTaskId("")
   }
 
   function applyPreset(preset) {
@@ -2984,11 +3047,23 @@ export default function Board({ user }) {
                                         </p>
                                       ) : null}
                                     </div>
-                                    <span className="badge badge-outline w-fit uppercase">{formatTaskTypeLabel(task.type)}</span>
+                                    <div className="flex flex-wrap gap-2">
+                                      <span className="badge badge-outline w-fit uppercase">
+                                        {formatTaskTypeLabel(task.type)}
+                                      </span>
+                                      {task.is_paused ? (
+                                        <span className="badge badge-ghost w-fit uppercase">Paused</span>
+                                      ) : null}
+                                    </div>
                                   </div>
                                   <p className="mt-3 text-sm text-base-content/72">
                                     Added {formatDate(task.created_at)}
                                   </p>
+                                  {task.is_paused ? (
+                                    <p className="mt-2 text-sm text-base-content/68">
+                                      This routine is paused, so it will not appear in the live queue or proof composer.
+                                    </p>
+                                  ) : null}
                                   <div className="mt-4 flex flex-wrap items-center gap-2">
                                     {isVerifiedStatusLabel(status.label) ? null : (
                                       <span className={`badge ${status.tone}`}>{status.label}</span>
@@ -3011,6 +3086,7 @@ export default function Board({ user }) {
                                         type="button"
                                         onClick={() => setActiveTab("checkins")}
                                         className="btn btn-primary btn-sm"
+                                        disabled={task.is_paused}
                                       >
                                         {status.label === "Needs fresh proof"
                                           ? "Refresh proof"
@@ -3022,8 +3098,31 @@ export default function Board({ user }) {
                                         type="button"
                                         onClick={() => startTaskEdit(task)}
                                         className="btn btn-outline btn-sm"
+                                        disabled={togglingTaskId === task.id || deletingTaskId === task.id}
                                       >
                                         Edit
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleToggleTaskPaused(task.id, !task.is_paused)}
+                                        className="btn btn-outline btn-sm"
+                                        disabled={togglingTaskId === task.id || deletingTaskId === task.id}
+                                      >
+                                        {togglingTaskId === task.id
+                                          ? task.is_paused
+                                            ? "Resuming..."
+                                            : "Pausing..."
+                                          : task.is_paused
+                                            ? "Resume"
+                                            : "Pause"}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteTask(task.id)}
+                                        className="btn btn-error btn-outline btn-sm"
+                                        disabled={deletingTaskId === task.id || togglingTaskId === task.id}
+                                      >
+                                        {deletingTaskId === task.id ? "Deleting..." : "Delete"}
                                       </button>
                                     </div>
                                   ) : null}
@@ -3161,7 +3260,7 @@ export default function Board({ user }) {
                     <PostComposer
                       isOwner={isOwner}
                       ownerLabel={ownerLabel}
-                      tasks={tasks}
+                      tasks={activeTasks}
                       selectedTaskId={selectedTaskId}
                       onSelectedTaskIdChange={setSelectedTaskId}
                       submittingPost={submittingPost}
