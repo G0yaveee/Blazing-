@@ -1209,6 +1209,14 @@ export default function Board({ user }) {
   const [goalDueDate, setGoalDueDate] = useState("")
   const [goalIsCompleted, setGoalIsCompleted] = useState(false)
   const [submittingGoal, setSubmittingGoal] = useState(false)
+  const [editingGoalId, setEditingGoalId] = useState("")
+  const [goalEditDraft, setGoalEditDraft] = useState({
+    title: "",
+    dueDate: "",
+    isCompleted: false,
+  })
+  const [savingGoalId, setSavingGoalId] = useState("")
+  const [deletingGoalId, setDeletingGoalId] = useState("")
   const [taskTitle, setTaskTitle] = useState("")
   const [taskType, setTaskType] = useState("daily")
   const [taskGoalId, setTaskGoalId] = useState("")
@@ -2122,6 +2130,93 @@ export default function Board({ user }) {
       setTaskGoalId(data.id)
     }
     setSubmittingGoal(false)
+  }
+
+  function startGoalEdit(goal) {
+    setEditingGoalId(goal.id)
+    setGoalEditDraft({
+      title: goal.title || "",
+      dueDate: goal.due_date || "",
+      isCompleted: Boolean(goal.is_completed),
+    })
+  }
+
+  async function handleSaveGoal(goalId) {
+    if (!goalEditDraft.title.trim()) return
+
+    setSavingGoalId(goalId)
+    setError("")
+
+    const { error: updateError } = await supabase
+      .from("goals")
+      .update({
+        title: goalEditDraft.title.trim(),
+        due_date: goalEditDraft.dueDate || null,
+        is_completed: goalEditDraft.isCompleted,
+      })
+      .eq("id", goalId)
+
+    if (updateError) {
+      setError(updateError.message)
+      setSavingGoalId("")
+      return
+    }
+
+    setEditingGoalId("")
+    setGoalEditDraft({
+      title: "",
+      dueDate: "",
+      isCompleted: false,
+    })
+    await refreshTasks()
+    await refreshPostsAndComments()
+    setSavingGoalId("")
+  }
+
+  async function handleDeleteGoal(goalId) {
+    const goalToDelete = goals.find((goal) => goal.id === goalId)
+    const linkedTaskCount = goalTaskCounts[goalId] ?? 0
+    const warning = linkedTaskCount > 0
+      ? `Delete "${goalToDelete?.title || "this goal"}"? ${linkedTaskCount} linked task${linkedTaskCount === 1 ? "" : "s"} may need to be reassigned first.`
+      : `Delete "${goalToDelete?.title || "this goal"}"? This removes the goal immediately.`
+
+    if (!window.confirm(warning)) return
+
+    setDeletingGoalId(goalId)
+    setError("")
+
+    const { error: deleteError } = await supabase
+      .from("goals")
+      .delete()
+      .eq("id", goalId)
+
+    if (deleteError) {
+      const baseMessage = deleteError.message || "Could not delete this goal."
+      const nextMessage = linkedTaskCount > 0
+        ? `${baseMessage} If tasks are still linked to this goal, reassign or remove them first.`
+        : baseMessage
+
+      setError(nextMessage)
+      setDeletingGoalId("")
+      return
+    }
+
+    if (editingGoalId === goalId) {
+      setEditingGoalId("")
+      setGoalEditDraft({
+        title: "",
+        dueDate: "",
+        isCompleted: false,
+      })
+    }
+
+    if (taskGoalId === goalId) {
+      setTaskGoalId("")
+    }
+
+    await refreshTasks()
+    await refreshPostsAndComments()
+    setDeletingGoalId("")
   }
 
   async function handleCommentSubmit(event, postId) {
@@ -3216,22 +3311,109 @@ export default function Board({ user }) {
                           </div>
                         ) : (
                           goals.map((goal) => {
+                            const isEditingGoal = editingGoalId === goal.id
                             return (
                               <div key={goal.id} className="rounded-[1rem] bg-base-100/85 px-4 py-3">
-                                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                  <span className="font-semibold text-base-content">{goal.title}</span>
-                                  <span className={`badge border-none ${goal.is_completed ? "bg-success text-success-content" : "bg-base-100 text-base-content"}`}>
-                                    {goal.is_completed ? "Accomplished" : "Not accomplished"}
-                                  </span>
-                                </div>
-                                <p className="mt-2 text-sm text-base-content/75">
-                                  Deadline: {formatDeadline(goal.due_date)}
-                                </p>
-                                <p className="mt-1 text-xs uppercase tracking-[0.14em] text-base-content/58">
-                                  {(goalTaskCounts[goal.id] ?? 0) === 0
-                                    ? "No linked tasks yet"
-                                    : `${goalTaskCounts[goal.id]} linked task${(goalTaskCounts[goal.id] ?? 0) === 1 ? "" : "s"}`}
-                                </p>
+                                {isEditingGoal ? (
+                                  <div className="grid gap-3">
+                                    <input
+                                      type="text"
+                                      value={goalEditDraft.title}
+                                      onChange={(event) =>
+                                        setGoalEditDraft((current) => ({
+                                          ...current,
+                                          title: event.target.value,
+                                        }))
+                                      }
+                                      className="input input-bordered w-full bg-base-100"
+                                    />
+                                    <input
+                                      type="date"
+                                      value={goalEditDraft.dueDate}
+                                      onChange={(event) =>
+                                        setGoalEditDraft((current) => ({
+                                          ...current,
+                                          dueDate: event.target.value,
+                                        }))
+                                      }
+                                      className="input input-bordered w-full bg-base-100"
+                                    />
+                                    <select
+                                      value={goalEditDraft.isCompleted ? "accomplished" : "not_accomplished"}
+                                      onChange={(event) =>
+                                        setGoalEditDraft((current) => ({
+                                          ...current,
+                                          isCompleted: event.target.value === "accomplished",
+                                        }))
+                                      }
+                                      className="select select-bordered w-full bg-base-100"
+                                    >
+                                      <option value="not_accomplished">Not accomplished</option>
+                                      <option value="accomplished">Accomplished</option>
+                                    </select>
+                                    <div className="flex flex-wrap gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSaveGoal(goal.id)}
+                                        className="btn btn-primary btn-sm"
+                                        disabled={!goalEditDraft.title.trim() || savingGoalId === goal.id}
+                                      >
+                                        {savingGoalId === goal.id ? "Saving..." : "Save"}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setEditingGoalId("")
+                                          setGoalEditDraft({
+                                            title: "",
+                                            dueDate: "",
+                                            isCompleted: false,
+                                          })
+                                        }}
+                                        className="btn btn-ghost btn-sm"
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                      <span className="font-semibold text-base-content">{goal.title}</span>
+                                      <span className={`badge border-none ${goal.is_completed ? "bg-success text-success-content" : "bg-base-100 text-base-content"}`}>
+                                        {goal.is_completed ? "Accomplished" : "Not accomplished"}
+                                      </span>
+                                    </div>
+                                    <p className="mt-2 text-sm text-base-content/75">
+                                      Deadline: {formatDeadline(goal.due_date)}
+                                    </p>
+                                    <p className="mt-1 text-xs uppercase tracking-[0.14em] text-base-content/58">
+                                      {(goalTaskCounts[goal.id] ?? 0) === 0
+                                        ? "No linked tasks yet"
+                                        : `${goalTaskCounts[goal.id]} linked task${(goalTaskCounts[goal.id] ?? 0) === 1 ? "" : "s"}`}
+                                    </p>
+                                    {isOwner ? (
+                                      <div className="mt-3 flex flex-wrap gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={() => startGoalEdit(goal)}
+                                          className="btn btn-outline btn-sm"
+                                          disabled={deletingGoalId === goal.id}
+                                        >
+                                          Edit
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleDeleteGoal(goal.id)}
+                                          className="btn btn-error btn-outline btn-sm"
+                                          disabled={deletingGoalId === goal.id || savingGoalId === goal.id}
+                                        >
+                                          {deletingGoalId === goal.id ? "Deleting..." : "Delete"}
+                                        </button>
+                                      </div>
+                                    ) : null}
+                                  </>
+                                )}
                               </div>
                             )
                           })
